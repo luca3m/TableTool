@@ -13,6 +13,7 @@
 #import "CSVHeuristic.h"
 #import "TTErrorViewController.h"
 #import "ToolbarIcons.h"
+#import <math.h>
 
 @interface Document () {
     NSCell *dataCell;
@@ -299,6 +300,7 @@
     
     _data[rowIndex] = rowArray;
     if (shouldReload) [self.tableView reloadData];
+    [self resizeColumnToFitContents:tableColumn];
 }
 
 -(void)tableViewColumnDidMove:(NSNotification *)aNotification {
@@ -572,6 +574,36 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
         ((NSCell *)tableColumn.headerCell).alignment = NSCenterTextAlignment;
         [self.tableView addTableColumn: tableColumn];
     }
+    [self resizeTableColumnsToFitContents];
+}
+
+-(void)resizeColumnToFitContents:(NSTableColumn *)column {
+    NSCell *sizingCell = [column.dataCell copy];
+    CGFloat width = [column.headerCell cellSize].width;
+    NSMutableArray<NSNumber *> *valueWidths = [NSMutableArray array];
+
+    for (NSInteger row = 0; row < _data.count; row++) {
+        id value = [self tableView:self.tableView objectValueForTableColumn:column row:row];
+        NSString *displayValue = [value description];
+        if (displayValue.length == 0) continue;
+        sizingCell.stringValue = displayValue;
+        [valueWidths addObject:@([sizingCell cellSize].width)];
+    }
+
+    if (valueWidths.count > 0) {
+        [valueWidths sortUsingSelector:@selector(compare:)];
+        width = MAX(width, valueWidths[valueWidths.count / 2].doubleValue);
+    }
+
+    width = MAX(40, ceil(width + 12));
+    column.maxWidth = MAX(column.maxWidth, width);
+    column.width = width;
+}
+
+-(void)resizeTableColumnsToFitContents {
+    for (NSTableColumn *column in self.tableView.tableColumns) {
+        [self resizeColumnToFitContents:column];
+    }
 }
 
 -(void)updateTableColumnsNames {
@@ -582,6 +614,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
             ((NSCell *)tableColumn.headerCell).alignment = NSCenterTextAlignment;
         }
     }
+    [self resizeTableColumnsToFitContents];
 }
 
 -(NSString *)generateColumnName:(int)index {
@@ -798,6 +831,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
         [_data removeObjectsAtIndexes:rowIndexes];
         [self.tableView removeRowsAtIndexes:rowIndexes withAnimation:NSTableViewAnimationSlideUp];
         [self.tableView endUpdates];
+        [self resizeTableColumnsToFitContents];
     } completionHandler:^{
         [self dataGotEdited];
     }];
@@ -814,6 +848,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 		[self.tableView insertRowsAtIndexes:rowIndexes withAnimation:NSTableViewAnimationSlideDown];
 		[self.tableView selectRowIndexes:rowIndexes byExtendingSelection:NO];
         [self.tableView endUpdates];
+        [self resizeTableColumnsToFitContents];
     } completionHandler:^{
     }];
 }
@@ -1068,6 +1103,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
         toInsertIndex++;
     }
     [self.tableView reloadData];
+    [self resizeTableColumnsToFitContents];
     
     NSIndexSet *toSelectRowIndexes = [[NSIndexSet alloc]initWithIndexesInRange:NSMakeRange(firstIndex, toInsertIndex-firstIndex)];
     [self.tableView selectRowIndexes:toSelectRowIndexes byExtendingSelection:NO];
