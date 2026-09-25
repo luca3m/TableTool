@@ -10,7 +10,7 @@
 #import "CSVConfiguration.h"
 #import "TTFormatViewController.h"
 
-@interface Document : NSDocument <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, TTFormatViewControllerDelegate>
+@interface Document : NSDocument <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSMenuDelegate, TTFormatViewControllerDelegate>
 
 @property NSMutableArray *data;
 @property long maxColumnNumber;
@@ -26,6 +26,7 @@
 @property (strong) IBOutlet NSButton *toolBarButtonDeleteRow;
 @property (strong) IBOutlet NSToolbarItem *toolbarItemDeleteColumn;
 @property (strong) IBOutlet NSToolbarItem *toolbarItemDeleteRow;
+@property (strong) IBOutlet NSToolbarItem *toolbarItemSearch;
 
 -(IBAction)addColumn:(id)sender;
 -(IBAction)addRow:(id)sender;
@@ -39,6 +40,19 @@
 -(IBAction)find:(id)sender;
 -(IBAction)findNext:(id)sender;
 -(IBAction)findPrevious:(id)sender;
+-(IBAction)changeCSVEncoding:(NSMenuItem *)sender;
+-(IBAction)changeCSVSeparator:(NSMenuItem *)sender;
+-(IBAction)changeCSVDecimalMark:(NSMenuItem *)sender;
+-(IBAction)changeCSVQuoteStyle:(NSMenuItem *)sender;
+-(IBAction)toggleCSVHeader:(id)sender;
+-(NSArray<NSTableColumn *> *)filterableColumns;
+-(NSArray<NSString *> *)filterValuesForColumnIdentifier:(NSString *)identifier;
+-(BOOL)isFilterValueIncluded:(NSString *)value forColumnIdentifier:(NSString *)identifier;
+-(BOOL)hasActiveFilters;
+-(IBAction)toggleColumnFilterValue:(NSMenuItem *)sender;
+-(IBAction)clearColumnFilters:(id)sender;
+-(IBAction)clearFiltersForColumn:(NSMenuItem *)sender;
+-(void)addFilterValueItemsForColumn:(NSTableColumn *)column toMenu:(NSMenu *)menu;
 
 -(void)configurationChangedForFormatViewController:(TTFormatViewController *)formatViewController;
 

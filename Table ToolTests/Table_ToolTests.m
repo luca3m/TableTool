@@ -11,6 +11,7 @@
 #import "CSVReader.h"
 #import "CSVConfiguration.h"
 #import "CSVHeuristic.h"
+#import "Document.h"
 
 @interface Table_ToolTests : XCTestCase {
     int count;
@@ -20,6 +21,37 @@
 @end
 
 @implementation Table_ToolTests
+
+- (void)testColumnFilterKeepsUnderlyingRowsAndMapsVisibleRows {
+    Document *document = [[Document alloc] init];
+    NSTableView *tableView = [[NSTableView alloc] initWithFrame:NSZeroRect];
+    [document.data addObjectsFromArray:@[
+        [@[@"Red", @"One"] mutableCopy],
+        [@[@"Blue", @"Two"] mutableCopy],
+        [@[@"Red", @"Three"] mutableCopy]
+    ]];
+    XCTAssertEqualObjects([document filterValuesForColumnIdentifier:@"0"], (@[@"Blue", @"Red"]));
+
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@"Red" action:NULL keyEquivalent:@""];
+    item.representedObject = @{ @"column": @"0", @"value": @"Red" };
+    [document toggleColumnFilterValue:item];
+
+    NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"1"];
+    XCTAssertEqual([document numberOfRowsInTableView:tableView], 1);
+    XCTAssertEqualObjects([document tableView:tableView objectValueForTableColumn:column row:0], @"Two");
+    XCTAssertEqual(document.data.count, 3);
+
+    [document clearColumnFilters:nil];
+    XCTAssertEqual([document numberOfRowsInTableView:tableView], 3);
+}
+
+- (void)testColumnFilterLimitIsTwentyDistinctValues {
+    Document *document = [[Document alloc] init];
+    for (NSInteger index = 0; index < 21; index++) {
+        [document.data addObject:[NSMutableArray arrayWithObject:[NSString stringWithFormat:@"Value %ld", (long)index]]];
+    }
+    XCTAssertEqual([document filterValuesForColumnIdentifier:@"0"].count, 0);
+}
 
 - (void)setUp {
     [super setUp];

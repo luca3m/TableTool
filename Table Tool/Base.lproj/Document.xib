@@ -18,6 +18,7 @@
                 <outlet property="toolbarItemAddRow" destination="uIc-SS-WZD" id="K0q-Mc-Iyb"/>
                 <outlet property="toolbarItemDeleteColumn" destination="RIC-u2-0Xr" id="N9X-h4-Gbj"/>
                 <outlet property="toolbarItemDeleteRow" destination="yQy-V2-Gkq" id="Ic3-C1-weY"/>
+                <outlet property="toolbarItemSearch" destination="Qv8-sR-2nz" id="N7W-Qp-vEf"/>
                 <outlet property="window" destination="xOd-HO-29H" id="JIz-fz-R2o"/>
             </connections>
         </customObject>
@@ -210,6 +211,14 @@
                             </connections>
                         </button>
                     </toolbarItem>
+                    <toolbarItem implicitItemIdentifier="D42DCC99-08C0-467A-A6DE-5D91E72A305F" label="Search" paletteLabel="Search" id="Qv8-sR-2nz">
+                        <size key="minSize" width="340" height="28"/>
+                        <size key="maxSize" width="340" height="28"/>
+                        <customView key="view" id="xgV-9e-u8C">
+                            <rect key="frame" x="0.0" y="0.0" width="340" height="28"/>
+                            <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                        </customView>
+                    </toolbarItem>
                 </allowedToolbarItems>
                 <defaultToolbarItems>
                     <toolbarItem reference="L16-81-E18"/>
@@ -217,6 +226,7 @@
                     <toolbarItem reference="uIc-SS-WZD"/>
                     <toolbarItem reference="yQy-V2-Gkq"/>
                     <toolbarItem reference="U88-dC-DZu"/>
+                    <toolbarItem reference="Qv8-sR-2nz"/>
                     <toolbarItem reference="cxB-ko-x5S"/>
                 </defaultToolbarItems>
             </toolbar>

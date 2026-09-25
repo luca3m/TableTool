@@ -31,12 +31,13 @@
     NSArray *validPBoardTypes;
     
     TTErrorViewController *errorController;
-    TTFormatViewController *statusBarFormatViewController;
     TTFormatViewController* accessoryViewController;
     NSSearchField *searchField;
     NSTextField *searchResultLabel;
     NSMutableArray<NSValue *> *searchMatches;
     NSInteger searchMatchIndex;
+    NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *excludedFilterValues;
+    NSArray<NSNumber *> *visibleRows;
 }
 @property BOOL didSave;
 
@@ -50,33 +51,21 @@
         _data = [[NSMutableArray alloc]init];
         _maxColumnNumber = 1;
         _csvConfig = [[CSVConfiguration alloc]init];
+        excludedFilterValues = [NSMutableDictionary dictionary];
         newFile = YES;
         errorCode5 = @"Your are not allowed to save while the input format has an error. Configure the format manually, until no error occurs.";
         _didSave = NO;
         
         [self initValidPBoardTypes];
         
-        [self addObserver:self forKeyPath:@"fileURL" options:0 context:nil];
-        [self addObserver:self forKeyPath:@"didSave" options:0 context:nil];
     }
     return self;
-}
-
--(void)dealloc {
-	[self removeObserver:self forKeyPath:@"fileURL"];
-	[self removeObserver:self forKeyPath:@"didSave"];
 }
 
 - (void)windowControllerDidLoadNib:(NSWindowController *)aController {
     [super windowControllerDidLoadNib:aController];
     dataCell = [self.tableView.tableColumns.firstObject dataCell];
     [self updateTableColumns];
-    
-    if (!statusBarFormatViewController) {
-        statusBarFormatViewController = [[TTFormatViewController alloc] initWithNibName:@"TTFormatViewController" bundle:nil];
-        statusBarFormatViewController.delegate = self;
-		statusBarFormatViewController.config = self.csvConfig;
-    }
     
     [self.tableView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
     [self.tableView setDraggingSourceOperationMask:NSDragOperationCopy forLocal:NO];
@@ -97,16 +86,9 @@
     
     [self updateToolbarIcons];
     [self configureDocumentAppearance];
-    [self installSearchBar];
+    [self installToolbarSearch];
+    [self installHeaderFilterMenu];
 
-    NSVisualEffectView *formatBackground = [[NSVisualEffectView alloc] initWithFrame:statusBarFormatViewController.view.bounds];
-    formatBackground.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    formatBackground.material = NSVisualEffectMaterialHeaderView;
-    formatBackground.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    formatBackground.state = NSVisualEffectStateFollowsWindowActiveState;
-    [statusBarFormatViewController.view addSubview:formatBackground positioned:NSWindowBelow relativeTo:nil];
-    [self.splitView addSubview:statusBarFormatViewController.view positioned:NSWindowAbove relativeTo:self.splitView];
-    [statusBarFormatViewController selectFormatByConfig];
 }
 
 - (void)configureDocumentAppearance {
@@ -126,28 +108,22 @@
     [(NSTextFieldCell *)dataCell setDrawsBackground:NO];
 }
 
-- (void)installSearchBar {
-    NSScrollView *scrollView = self.tableView.enclosingScrollView;
-    NSView *container = scrollView.superview;
-    NSVisualEffectView *bar = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
-    bar.translatesAutoresizingMaskIntoConstraints = NO;
-    bar.material = NSVisualEffectMaterialHeaderView;
-    bar.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    bar.state = NSVisualEffectStateFollowsWindowActiveState;
-    [container addSubview:bar positioned:NSWindowAbove relativeTo:scrollView];
-
+- (void)installToolbarSearch {
+    NSView *container = self.toolbarItemSearch.view;
     searchField = [[NSSearchField alloc] initWithFrame:NSZeroRect];
     searchField.translatesAutoresizingMaskIntoConstraints = NO;
     searchField.placeholderString = @"Search values";
     searchField.toolTip = @"Search cell values (⌘F)";
     searchField.delegate = self;
-    [bar addSubview:searchField];
+    [container addSubview:searchField];
 
     searchResultLabel = [NSTextField labelWithString:@""];
     searchResultLabel.translatesAutoresizingMaskIntoConstraints = NO;
     searchResultLabel.textColor = NSColor.secondaryLabelColor;
     searchResultLabel.alignment = NSTextAlignmentRight;
-    [bar addSubview:searchResultLabel];
+    searchResultLabel.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    searchResultLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [container addSubview:searchResultLabel];
 
     NSButton *previous = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"chevron.up" accessibilityDescription:@"Previous match"] target:self action:@selector(findPrevious:)];
     NSButton *next = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"chevron.down" accessibilityDescription:@"Next match"] target:self action:@selector(findNext:)];
@@ -157,34 +133,68 @@
     next.bezelStyle = NSBezelStyleTexturedRounded;
     previous.toolTip = @"Previous match (⇧⌘G)";
     next.toolTip = @"Next match (⌘G)";
-    [bar addSubview:previous];
-    [bar addSubview:next];
+    [container addSubview:previous];
+    [container addSubview:next];
 
-    for (NSLayoutConstraint *constraint in container.constraints.copy) {
-        if ((constraint.firstItem == scrollView || constraint.secondItem == scrollView) &&
-            (constraint.firstAttribute == NSLayoutAttributeTop || constraint.secondAttribute == NSLayoutAttributeTop)) {
-            constraint.active = NO;
-        }
-    }
     [NSLayoutConstraint activateConstraints:@[
-        [bar.topAnchor constraintEqualToAnchor:container.topAnchor],
-        [bar.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
-        [bar.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
-        [bar.heightAnchor constraintEqualToConstant:48],
-        [scrollView.topAnchor constraintEqualToAnchor:bar.bottomAnchor],
-        [searchField.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor constant:14],
-        [searchField.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
-        [searchField.widthAnchor constraintEqualToConstant:260],
-        [searchResultLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:searchField.trailingAnchor constant:12],
-        [searchResultLabel.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
-        [previous.leadingAnchor constraintEqualToAnchor:searchResultLabel.trailingAnchor constant:10],
-        [previous.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
+        [searchField.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+        [searchField.centerYAnchor constraintEqualToAnchor:container.centerYAnchor],
+        [searchField.widthAnchor constraintEqualToConstant:175],
+        [searchResultLabel.leadingAnchor constraintEqualToAnchor:searchField.trailingAnchor constant:8],
+        [searchResultLabel.centerYAnchor constraintEqualToAnchor:container.centerYAnchor],
+        [searchResultLabel.widthAnchor constraintEqualToConstant:90],
+        [previous.leadingAnchor constraintEqualToAnchor:searchResultLabel.trailingAnchor constant:4],
+        [previous.centerYAnchor constraintEqualToAnchor:container.centerYAnchor],
+        [previous.widthAnchor constraintEqualToConstant:24],
         [next.leadingAnchor constraintEqualToAnchor:previous.trailingAnchor constant:4],
-        [next.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
-        [next.trailingAnchor constraintEqualToAnchor:bar.trailingAnchor constant:-14]
+        [next.centerYAnchor constraintEqualToAnchor:container.centerYAnchor],
+        [next.widthAnchor constraintEqualToConstant:24],
+        [next.trailingAnchor constraintLessThanOrEqualToAnchor:container.trailingAnchor]
     ]];
     searchMatches = [NSMutableArray array];
     searchMatchIndex = NSNotFound;
+}
+
+- (void)installHeaderFilterMenu {
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Filter Column"];
+    menu.delegate = self;
+    self.tableView.headerView.menu = menu;
+}
+
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    [menu removeAllItems];
+    NSEvent *event = NSApp.currentEvent;
+    NSTableHeaderView *header = self.tableView.headerView;
+    NSInteger columnIndex = -1;
+    if (event.window == self.tableView.window) {
+        columnIndex = [header columnAtPoint:[header convertPoint:event.locationInWindow fromView:nil]];
+    }
+    if (columnIndex < 0 || columnIndex >= self.tableView.numberOfColumns) {
+        NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:@"No column selected" action:NULL keyEquivalent:@""];
+        empty.enabled = NO;
+        [menu addItem:empty];
+        return;
+    }
+
+    NSTableColumn *column = self.tableView.tableColumns[columnIndex];
+    NSArray<NSString *> *values = [self filterValuesForColumnIdentifier:column.identifier];
+    if (values.count >= 2 && values.count <= 20) {
+        [self addFilterValueItemsForColumn:column toMenu:menu];
+        [menu addItem:[NSMenuItem separatorItem]];
+        NSMenuItem *clearColumn = [[NSMenuItem alloc] initWithTitle:@"Show All Values in This Column" action:@selector(clearFiltersForColumn:) keyEquivalent:@""];
+        clearColumn.target = self;
+        clearColumn.representedObject = column.identifier;
+        clearColumn.enabled = excludedFilterValues[column.identifier].count > 0;
+        [menu addItem:clearColumn];
+    } else {
+        NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:@"Filtering requires 2–20 distinct values" action:NULL keyEquivalent:@""];
+        empty.enabled = NO;
+        [menu addItem:empty];
+    }
+    NSMenuItem *clearAll = [[NSMenuItem alloc] initWithTitle:@"Clear All Filters" action:@selector(clearColumnFilters:) keyEquivalent:@""];
+    clearAll.target = self;
+    clearAll.enabled = [self hasActiveFilters];
+    [menu addItem:clearAll];
 }
 
 - (void)controlTextDidChange:(NSNotification *)notification {
@@ -196,7 +206,7 @@
     [searchMatches removeAllObjects];
     NSString *query = searchField.stringValue;
     if (query.length > 0) {
-        for (NSInteger row = 0; row < self.data.count; row++) {
+        for (NSInteger row = 0; row < [self numberOfRowsInTableView:self.tableView]; row++) {
             for (NSInteger column = 0; column < self.tableView.numberOfColumns; column++) {
                 id value = [self tableView:self.tableView objectValueForTableColumn:self.tableView.tableColumns[column] row:row];
                 NSString *displayValue = [value description];
@@ -213,7 +223,7 @@
 
 - (void)showCurrentSearchMatch {
     if (searchField.stringValue.length == 0) {
-        searchResultLabel.stringValue = @"";
+        searchResultLabel.stringValue = [self hasActiveFilters] ? [NSString stringWithFormat:@"%ld of %ld rows shown", (long)visibleRows.count, (long)_data.count] : @"";
         return;
     }
     if (searchMatchIndex == NSNotFound) {
@@ -337,6 +347,8 @@
 
 -(BOOL)reloadDataWithError:(NSError**)error {
 	[self.undoManager removeAllActions];
+	[excludedFilterValues removeAllObjects];
+	visibleRows = nil;
 	
 	_maxColumnNumber = 1;
 	[_data removeAllObjects];
@@ -349,8 +361,7 @@
 		if (!line) {
 			if (error) *error = outError;
 			[self updateTableColumns];
-			[self.tableView reloadData];
-			[self updateSearchMatches];
+			[self rebuildVisibleRows];
 			return NO;
 		}
 		_maxColumnNumber = MAX(_maxColumnNumber, line.count);
@@ -362,8 +373,7 @@
 	}
 	
 	[self updateTableColumns];
-	[self.tableView reloadData];
-	[self updateSearchMatches];
+	[self rebuildVisibleRows];
 	return YES;
 }
 
@@ -390,11 +400,15 @@
 #pragma mark - tableViewDataSource, delegate
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
-    return [_data count];
+    return visibleRows ? visibleRows.count : _data.count;
+}
+
+- (NSInteger)modelRowForVisibleRow:(NSInteger)row {
+    return visibleRows ? visibleRows[row].integerValue : row;
 }
 
 - (id)tableView:(NSTableView *)tableView objectValueForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex {
-    
+    rowIndex = [self modelRowForVisibleRow:rowIndex];
     if(_data.count >= rowIndex+1) {
         NSArray *rowArray = _data[rowIndex];
         if(rowArray.count >= tableColumn.identifier.integerValue+1){
@@ -408,14 +422,14 @@
 }
 
 -(void)tableView:(NSTableView *)tableView setObjectValue:(id)object forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex {
-    
-    [self restoreObjectValue:object forTableColumn:tableColumn row:rowIndex reload:NO];
+    [self restoreObjectValue:object forTableColumn:tableColumn row:[self modelRowForVisibleRow:rowIndex] reload:NO];
     [self.undoManager setActionName:@"Edit Cell"];
     
 }
 
 -(void)tableView:(NSTableView *)tableView willDisplayCell:(id)cell forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex {
-    if(_data.count <= rowIndex) return;
+    NSInteger modelRow = [self modelRowForVisibleRow:rowIndex];
+    if(_data.count <= modelRow) return;
     NSTextFieldCell *textCell = cell;
     BOOL matchesSearch = NO;
     if (searchField.stringValue.length > 0) {
@@ -424,7 +438,7 @@
     }
     textCell.drawsBackground = matchesSearch;
     textCell.backgroundColor = matchesSearch ? [NSColor.controlAccentColor colorWithAlphaComponent:0.20] : NSColor.textBackgroundColor;
-    NSArray *rowArray = [_data objectAtIndex:rowIndex];
+    NSArray *rowArray = [_data objectAtIndex:modelRow];
     if(rowArray.count > tableColumn.identifier.integerValue){
         if([rowArray[tableColumn.identifier.integerValue] isKindOfClass:[NSDecimalNumber class]]){
             textCell.alignment = NSRightTextAlignment;
@@ -458,9 +472,8 @@
     }
     
     _data[rowIndex] = rowArray;
-    if (shouldReload) [self.tableView reloadData];
+    [self rebuildVisibleRows];
     [self resizeColumnToFitContents:tableColumn];
-    [self updateSearchMatches];
 }
 
 -(void)tableViewColumnDidMove:(NSNotification *)aNotification {
@@ -505,7 +518,10 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
     NSData *serializedRowIndexes = [NSKeyedArchiver archivedDataWithRootObject:rowIndexes];
     [pboard setData:serializedRowIndexes forType:TTRowInternalPboardType];
 
-    NSArray *rowDataAtIndexes = [_data objectsAtIndexes:rowIndexes];
+    NSMutableArray *rowDataAtIndexes = [NSMutableArray array];
+    [rowIndexes enumerateIndexesUsingBlock:^(NSUInteger index, BOOL *stop) {
+        [rowDataAtIndexes addObject:_data[[self modelRowForVisibleRow:index]]];
+    }];
     
     // tab-separated text, for supporting drag & drop from Table Tool to table based apps like Numbers or TextEdit
     CSVConfiguration *tabSeparatedCSVConfiguration = [self.csvConfig copy];
@@ -526,6 +542,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
                  proposedRow:(NSInteger)row
        proposedDropOperation:(NSTableViewDropOperation)dropOperation
 {
+    if ([self hasActiveFilters]) return NSDragOperationNone;
     NSPasteboard *pboard = [info draggingPasteboard];
     NSString *type = [pboard availableTypeFromArray:validPBoardTypes];
     if ([type isEqualToString:TTRowInternalPboardType] &&
@@ -742,7 +759,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
     CGFloat width = [column.headerCell cellSize].width;
     NSMutableArray<NSNumber *> *valueWidths = [NSMutableArray array];
 
-    for (NSInteger row = 0; row < _data.count; row++) {
+    for (NSInteger row = 0; row < [self numberOfRowsInTableView:self.tableView]; row++) {
         id value = [self tableView:self.tableView objectValueForTableColumn:column row:row];
         NSString *displayValue = [value description];
         if (displayValue.length == 0) continue;
@@ -829,6 +846,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(void)addRowAbove:(id)sender {
+    if ([self hasActiveFilters]) return;
     
     if(![self.tableView.window makeFirstResponder:self.tableView]) {
         NSBeep();
@@ -848,6 +866,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(void)addRowBelow:(id)sender {
+    if ([self hasActiveFilters]) return;
     
     if(![self.tableView.window makeFirstResponder:self.tableView]) {
         NSBeep();
@@ -867,6 +886,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(void)addColumnLeft:(id)sender {
+    if ([self hasActiveFilters]) return;
     
     if(![self.tableView.window makeFirstResponder:self.tableView]) {
         NSBeep();
@@ -889,6 +909,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(void)addColumnRight:(id)sender {
+    if ([self hasActiveFilters]) return;
     
     if(![self.tableView.window makeFirstResponder:self.tableView]) {
         NSBeep();
@@ -911,6 +932,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(IBAction)deleteColumn:(id)sender {
+    if ([self hasActiveFilters]) return;
     
     long selectedIndex = [self.tableView selectedColumn];
     if(selectedIndex == -1 || ![self.tableView.window makeFirstResponder:self.tableView]) {
@@ -924,6 +946,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(IBAction)deleteRow:(id)sender {
+    if ([self hasActiveFilters]) return;
     
     long selectedIndex = [self.tableView selectedRow];
     if(selectedIndex == -1 || ![self.tableView.window makeFirstResponder:self.tableView]) {
@@ -1125,6 +1148,45 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 
 -(void)configurationChangedForFormatViewController:(TTFormatViewController*)formatViewController {
 	self.csvConfig = formatViewController.config;
+	[self reloadForConfigurationChange];
+}
+
+-(BOOL)canChangeCSVFormat {
+    return !self.fileURL || (!self.didSave && !self.documentEdited);
+}
+
+-(IBAction)changeCSVEncoding:(NSMenuItem *)sender {
+    if (![self canChangeCSVFormat]) return;
+    self.csvConfig.encoding = sender.tag;
+    [self reloadForConfigurationChange];
+}
+
+-(IBAction)changeCSVSeparator:(NSMenuItem *)sender {
+    if (![self canChangeCSVFormat]) return;
+    self.csvConfig.columnSeparator = @[@",", @";", @"\t", @"|"][sender.tag];
+    [self reloadForConfigurationChange];
+}
+
+-(IBAction)changeCSVDecimalMark:(NSMenuItem *)sender {
+    if (![self canChangeCSVFormat]) return;
+    self.csvConfig.decimalMark = sender.tag == 0 ? @"." : @",";
+    [self reloadForConfigurationChange];
+}
+
+-(IBAction)changeCSVQuoteStyle:(NSMenuItem *)sender {
+    if (![self canChangeCSVFormat]) return;
+    self.csvConfig.quoteCharacter = sender.tag == 2 ? @"" : @"\"";
+    self.csvConfig.escapeCharacter = sender.tag == 0 ? @"\"" : sender.tag == 1 ? @"\\" : @"";
+    [self reloadForConfigurationChange];
+}
+
+-(IBAction)toggleCSVHeader:(id)sender {
+    if (![self canChangeCSVFormat]) return;
+    self.csvConfig.firstRowAsHeader = !self.csvConfig.firstRowAsHeader;
+    [self reloadForConfigurationChange];
+}
+
+-(void)reloadForConfigurationChange {
 	if (!newFile) {
 		NSError *outError;
 		BOOL didReload = [self reloadDataWithError:&outError];
@@ -1148,21 +1210,148 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
     if (searchField.stringValue.length > 0) [self updateSearchMatches];
 }
 
+#pragma mark - Column filtering
+
+- (NSString *)filterValueForRow:(NSArray *)row columnIdentifier:(NSString *)identifier {
+    NSInteger index = identifier.integerValue;
+    if (index >= row.count) return @"";
+    id value = row[index];
+    if ([value isKindOfClass:[NSDecimalNumber class]]) {
+        return [value descriptionWithLocale:@{NSLocaleDecimalSeparator:self.csvConfig.decimalMark}];
+    }
+    return [value description] ?: @"";
+}
+
+- (NSArray<NSString *> *)filterValuesForColumnIdentifier:(NSString *)identifier {
+    NSMutableSet<NSString *> *values = [NSMutableSet set];
+    for (NSArray *row in _data) {
+        [values addObject:[self filterValueForRow:row columnIdentifier:identifier]];
+        if (values.count > 20) return @[];
+    }
+    return [[values allObjects] sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+}
+
+- (NSArray<NSTableColumn *> *)filterableColumns {
+    NSMutableArray<NSTableColumn *> *columns = [NSMutableArray array];
+    for (NSTableColumn *column in self.tableView.tableColumns) {
+        NSUInteger count = [self filterValuesForColumnIdentifier:column.identifier].count;
+        if (count >= 2 && count <= 20) [columns addObject:column];
+    }
+    return columns;
+}
+
+- (BOOL)hasActiveFilters {
+    return excludedFilterValues.count > 0;
+}
+
+- (BOOL)isFilterValueIncluded:(NSString *)value forColumnIdentifier:(NSString *)identifier {
+    return ![excludedFilterValues[identifier] containsObject:value];
+}
+
+- (void)addFilterValueItemsForColumn:(NSTableColumn *)column toMenu:(NSMenu *)menu {
+    for (NSString *value in [self filterValuesForColumnIdentifier:column.identifier]) {
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:value.length ? value : @"(Empty)" action:@selector(toggleColumnFilterValue:) keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = @{ @"column": column.identifier, @"value": value };
+        item.state = [self isFilterValueIncluded:value forColumnIdentifier:column.identifier] ? NSControlStateValueOn : NSControlStateValueOff;
+        [menu addItem:item];
+    }
+}
+
+- (void)rebuildVisibleRows {
+    [self.tableView deselectAll:nil];
+    if (![self hasActiveFilters]) {
+        visibleRows = nil;
+    } else {
+        NSMutableArray<NSNumber *> *rows = [NSMutableArray array];
+        for (NSUInteger index = 0; index < _data.count; index++) {
+            NSArray *row = _data[index];
+            BOOL included = YES;
+            for (NSString *identifier in excludedFilterValues) {
+                if ([excludedFilterValues[identifier] containsObject:[self filterValueForRow:row columnIdentifier:identifier]]) {
+                    included = NO;
+                    break;
+                }
+            }
+            if (included) [rows addObject:@(index)];
+        }
+        visibleRows = rows;
+    }
+    [self.tableView reloadData];
+    [self updateSearchMatches];
+    BOOL canChangeStructure = enableEditing && ![self hasActiveFilters];
+    self.toolBarButtonDeleteColumn.enabled = canChangeStructure;
+    self.toolBarButtonDeleteRow.enabled = canChangeStructure;
+    self.toolBarButtonsAddColumn.enabled = canChangeStructure;
+    self.toolBarButtonsAddRow.enabled = canChangeStructure;
+}
+
+- (IBAction)toggleColumnFilterValue:(NSMenuItem *)sender {
+    NSDictionary *selection = sender.representedObject;
+    NSString *identifier = selection[@"column"];
+    NSString *value = selection[@"value"];
+    NSMutableSet<NSString *> *excluded = excludedFilterValues[identifier];
+    if (!excluded) {
+        excluded = [NSMutableSet set];
+        excludedFilterValues[identifier] = excluded;
+    }
+    if ([excluded containsObject:value]) [excluded removeObject:value];
+    else [excluded addObject:value];
+    if (excluded.count == 0) [excludedFilterValues removeObjectForKey:identifier];
+    [self rebuildVisibleRows];
+}
+
+- (IBAction)clearColumnFilters:(id)sender {
+    [excludedFilterValues removeAllObjects];
+    [self rebuildVisibleRows];
+}
+
+- (IBAction)clearFiltersForColumn:(NSMenuItem *)sender {
+    [excludedFilterValues removeObjectForKey:sender.representedObject];
+    [self rebuildVisibleRows];
+}
+
 #pragma mark - copy,paste,delete
 
 -(BOOL)validateMenuItem:(NSMenuItem *)menuItem {
+    if (menuItem.action == @selector(clearColumnFilters:)) return [self hasActiveFilters];
+    if (menuItem.action == @selector(clearFiltersForColumn:)) return excludedFilterValues[menuItem.representedObject].count > 0;
+    if (menuItem.action == @selector(changeCSVEncoding:)) {
+        menuItem.state = menuItem.tag == self.csvConfig.encoding ? NSControlStateValueOn : NSControlStateValueOff;
+        return [self canChangeCSVFormat];
+    }
+    if (menuItem.action == @selector(changeCSVSeparator:)) {
+        NSArray<NSString *> *separators = @[@",", @";", @"\t", @"|"];
+        menuItem.state = [self.csvConfig.columnSeparator isEqualToString:separators[menuItem.tag]] ? NSControlStateValueOn : NSControlStateValueOff;
+        return [self canChangeCSVFormat];
+    }
+    if (menuItem.action == @selector(changeCSVDecimalMark:)) {
+        menuItem.state = [self.csvConfig.decimalMark isEqualToString:(menuItem.tag == 0 ? @"." : @",")] ? NSControlStateValueOn : NSControlStateValueOff;
+        return [self canChangeCSVFormat];
+    }
+    if (menuItem.action == @selector(changeCSVQuoteStyle:)) {
+        BOOL selected = menuItem.tag == 0 ? [self.csvConfig.quoteCharacter isEqualToString:@"\""] && [self.csvConfig.escapeCharacter isEqualToString:@"\""] :
+                        menuItem.tag == 1 ? [self.csvConfig.quoteCharacter isEqualToString:@"\""] && [self.csvConfig.escapeCharacter isEqualToString:@"\\"] :
+                        self.csvConfig.quoteCharacter.length == 0;
+        menuItem.state = selected ? NSControlStateValueOn : NSControlStateValueOff;
+        return [self canChangeCSVFormat];
+    }
+    if (menuItem.action == @selector(toggleCSVHeader:)) {
+        menuItem.state = self.csvConfig.firstRowAsHeader ? NSControlStateValueOn : NSControlStateValueOff;
+        return [self canChangeCSVFormat];
+    }
     if (menuItem.action == @selector(copy:)){
        if([self.tableView selectedRow] == -1 && [self.tableView selectedColumn] == -1){
            return NO;
        }
     }
     if (menuItem.action == @selector(paste:)) {
-        if(!enableEditing) {
+        if(!enableEditing || [self hasActiveFilters]) {
             return NO;
         }
     }
     if (menuItem.action == @selector(delete:)) {
-        if(([self.tableView selectedRow] == -1 && [self.tableView selectedColumn] == -1)|| !enableEditing){
+        if(([self.tableView selectedRow] == -1 && [self.tableView selectedColumn] == -1)|| !enableEditing || [self hasActiveFilters]){
             return NO;
         }
     }
@@ -1185,7 +1374,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
     
     [rowIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
         NSMutableString *rowString = [NSMutableString string];
-        NSArray *row = _data[idx];
+        NSArray *row = _data[[self modelRowForVisibleRow:idx]];
         for(NSString *columnId in [self getColumnsOrder]) {
             if(row.count <= columnId.integerValue) break;
             NSString *cellValue;
@@ -1200,7 +1389,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
         [copyString appendString:rowString];
         [copyString appendString:@"\n"];
     }];
-    [copyString deleteCharactersInRange:NSMakeRange(copyString.length-1, 1)];
+    if (copyString.length > 0) [copyString deleteCharactersInRange:NSMakeRange(copyString.length-1, 1)];
     
     NSPasteboard *generalPasteboard = [NSPasteboard generalPasteboard];
     [generalPasteboard clearContents];
@@ -1212,7 +1401,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
     
     for(int i = 0; i < [self.tableView numberOfRows];i++){
         NSMutableString *rowString = [[NSMutableString alloc]init];
-        NSArray *row = _data[i];
+        NSArray *row = _data[[self modelRowForVisibleRow:i]];
         [columnIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
             NSUInteger columnIndex = ((NSTableColumn *)self.tableView.tableColumns[idx]).identifier.integerValue;
             NSString *cellValue;
@@ -1228,7 +1417,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
         [copyString appendString:rowString];
         [copyString appendString:@"\n"];
     }
-    [copyString deleteCharactersInRange:NSMakeRange(copyString.length-1, 1)];
+    if (copyString.length > 0) [copyString deleteCharactersInRange:NSMakeRange(copyString.length-1, 1)];
     
     NSPasteboard *generalPasteboard = [NSPasteboard generalPasteboard];
     [generalPasteboard clearContents];
@@ -1244,6 +1433,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(IBAction)paste:(id)sender {
+    if ([self hasActiveFilters]) return;
     long toInsertIndex;
     if([self.tableView selectedRow] == -1){
         toInsertIndex = [self.tableView numberOfRows];
@@ -1280,6 +1470,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(IBAction)delete:(id)sender {
+    if ([self hasActiveFilters]) return;
     long selectedIndex = [self.tableView selectedRow];
     if(selectedIndex == -1){
         selectedIndex = [self.tableView selectedColumn];
@@ -1296,31 +1487,6 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
         [self.undoManager setActionName:@"Delete Row(s)"];
     }
     [self dataGotEdited];
-}
-
--(void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSString *,id> *)change context:(void *)context {
-    [self updateStatusBar];
-}
-
--(void)updateChangeCount:(NSDocumentChangeType)change {
-    [super updateChangeCount:change];
-    [self updateStatusBar];
-}
-
--(void)updateStatusBar {
-    if (self.fileURL) {
-        if (self.didSave) {
-            [statusBarFormatViewController setEnabled:NO];
-        } else {
-            if (self.documentEdited) {
-                [statusBarFormatViewController setEnabled:NO];
-            } else {
-                [statusBarFormatViewController setEnabled:YES];
-            }
-        }
-    } else {
-        [statusBarFormatViewController setEnabled:YES];
-    }
 }
 
 #pragma mark - Menu Item Actions
