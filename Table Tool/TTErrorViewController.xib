@@ -56,8 +56,8 @@
                 <constraint firstItem="LkJ-4t-3rh" firstAttribute="leading" secondItem="6YY-IT-zW8" secondAttribute="trailing" constant="20" id="gs9-qN-jI5"/>
                 <constraint firstAttribute="bottom" secondItem="0LW-Mb-JBO" secondAttribute="bottom" constant="15" id="nT1-kb-yGc"/>
             </constraints>
-            <color key="borderColor" white="0.0" alpha="0.41999999999999998" colorSpace="calibratedWhite"/>
-            <color key="fillColor" red="1" green="1" blue="1" alpha="1" colorSpace="calibratedRGB"/>
+            <color key="borderColor" name="separatorColor" catalog="System" colorSpace="catalog"/>
+            <color key="fillColor" name="windowBackgroundColor" catalog="System" colorSpace="catalog"/>
         </box>
     </objects>
     <resources>

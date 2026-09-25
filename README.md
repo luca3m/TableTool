@@ -27,6 +27,9 @@ You can also set the specifications manually.
 **Edit Files:**
 Edit the contents of the cells, rows and columns of the document easily in a grid based user interface.
 
+**Find Values:**
+Use the search field above the table or press Command-F to find cell values as you type. Matching cells are highlighted; use the arrow buttons or Command-G / Shift-Command-G to move between matches.
+
 **Convert Files:**
 Convert an existing CSV file to a different format.
 

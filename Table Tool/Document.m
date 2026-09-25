@@ -33,6 +33,10 @@
     TTErrorViewController *errorController;
     TTFormatViewController *statusBarFormatViewController;
     TTFormatViewController* accessoryViewController;
+    NSSearchField *searchField;
+    NSTextField *searchResultLabel;
+    NSMutableArray<NSValue *> *searchMatches;
+    NSInteger searchMatchIndex;
 }
 @property BOOL didSave;
 
@@ -92,9 +96,155 @@
     });
     
     [self updateToolbarIcons];
+    [self configureDocumentAppearance];
+    [self installSearchBar];
 
+    NSVisualEffectView *formatBackground = [[NSVisualEffectView alloc] initWithFrame:statusBarFormatViewController.view.bounds];
+    formatBackground.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    formatBackground.material = NSVisualEffectMaterialHeaderView;
+    formatBackground.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+    formatBackground.state = NSVisualEffectStateFollowsWindowActiveState;
+    [statusBarFormatViewController.view addSubview:formatBackground positioned:NSWindowBelow relativeTo:nil];
     [self.splitView addSubview:statusBarFormatViewController.view positioned:NSWindowAbove relativeTo:self.splitView];
     [statusBarFormatViewController selectFormatByConfig];
+}
+
+- (void)configureDocumentAppearance {
+    NSWindow *window = self.tableView.window;
+    window.titlebarAppearsTransparent = YES;
+    window.toolbarStyle = NSWindowToolbarStyleUnified;
+    window.toolbar.displayMode = NSToolbarDisplayModeIconOnly;
+    window.minSize = NSMakeSize(560, 320);
+    self.tableView.backgroundColor = NSColor.textBackgroundColor;
+    self.tableView.gridColor = NSColor.separatorColor;
+    self.tableView.usesAlternatingRowBackgroundColors = YES;
+    self.tableView.rowHeight = 25;
+    self.tableView.enclosingScrollView.drawsBackground = YES;
+    self.tableView.enclosingScrollView.backgroundColor = NSColor.textBackgroundColor;
+    dataCell.font = [NSFont systemFontOfSize:NSFont.systemFontSize];
+    [(NSTextFieldCell *)dataCell setBackgroundColor:NSColor.textBackgroundColor];
+    [(NSTextFieldCell *)dataCell setDrawsBackground:NO];
+}
+
+- (void)installSearchBar {
+    NSScrollView *scrollView = self.tableView.enclosingScrollView;
+    NSView *container = scrollView.superview;
+    NSVisualEffectView *bar = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
+    bar.translatesAutoresizingMaskIntoConstraints = NO;
+    bar.material = NSVisualEffectMaterialHeaderView;
+    bar.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+    bar.state = NSVisualEffectStateFollowsWindowActiveState;
+    [container addSubview:bar positioned:NSWindowAbove relativeTo:scrollView];
+
+    searchField = [[NSSearchField alloc] initWithFrame:NSZeroRect];
+    searchField.translatesAutoresizingMaskIntoConstraints = NO;
+    searchField.placeholderString = @"Search values";
+    searchField.toolTip = @"Search cell values (⌘F)";
+    searchField.delegate = self;
+    [bar addSubview:searchField];
+
+    searchResultLabel = [NSTextField labelWithString:@""];
+    searchResultLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    searchResultLabel.textColor = NSColor.secondaryLabelColor;
+    searchResultLabel.alignment = NSTextAlignmentRight;
+    [bar addSubview:searchResultLabel];
+
+    NSButton *previous = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"chevron.up" accessibilityDescription:@"Previous match"] target:self action:@selector(findPrevious:)];
+    NSButton *next = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"chevron.down" accessibilityDescription:@"Next match"] target:self action:@selector(findNext:)];
+    previous.translatesAutoresizingMaskIntoConstraints = NO;
+    next.translatesAutoresizingMaskIntoConstraints = NO;
+    previous.bezelStyle = NSBezelStyleTexturedRounded;
+    next.bezelStyle = NSBezelStyleTexturedRounded;
+    previous.toolTip = @"Previous match (⇧⌘G)";
+    next.toolTip = @"Next match (⌘G)";
+    [bar addSubview:previous];
+    [bar addSubview:next];
+
+    for (NSLayoutConstraint *constraint in container.constraints.copy) {
+        if ((constraint.firstItem == scrollView || constraint.secondItem == scrollView) &&
+            (constraint.firstAttribute == NSLayoutAttributeTop || constraint.secondAttribute == NSLayoutAttributeTop)) {
+            constraint.active = NO;
+        }
+    }
+    [NSLayoutConstraint activateConstraints:@[
+        [bar.topAnchor constraintEqualToAnchor:container.topAnchor],
+        [bar.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+        [bar.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+        [bar.heightAnchor constraintEqualToConstant:48],
+        [scrollView.topAnchor constraintEqualToAnchor:bar.bottomAnchor],
+        [searchField.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor constant:14],
+        [searchField.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
+        [searchField.widthAnchor constraintEqualToConstant:260],
+        [searchResultLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:searchField.trailingAnchor constant:12],
+        [searchResultLabel.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
+        [previous.leadingAnchor constraintEqualToAnchor:searchResultLabel.trailingAnchor constant:10],
+        [previous.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
+        [next.leadingAnchor constraintEqualToAnchor:previous.trailingAnchor constant:4],
+        [next.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
+        [next.trailingAnchor constraintEqualToAnchor:bar.trailingAnchor constant:-14]
+    ]];
+    searchMatches = [NSMutableArray array];
+    searchMatchIndex = NSNotFound;
+}
+
+- (void)controlTextDidChange:(NSNotification *)notification {
+    if (notification.object == searchField) [self updateSearchMatches];
+}
+
+- (void)updateSearchMatches {
+    if (!searchField || !self.tableView) return;
+    [searchMatches removeAllObjects];
+    NSString *query = searchField.stringValue;
+    if (query.length > 0) {
+        for (NSInteger row = 0; row < self.data.count; row++) {
+            for (NSInteger column = 0; column < self.tableView.numberOfColumns; column++) {
+                id value = [self tableView:self.tableView objectValueForTableColumn:self.tableView.tableColumns[column] row:row];
+                NSString *displayValue = [value description];
+                if (displayValue.length > 0 && [displayValue rangeOfString:query options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                    [searchMatches addObject:[NSValue valueWithPoint:NSMakePoint(column, row)]];
+                }
+            }
+        }
+    }
+    searchMatchIndex = searchMatches.count > 0 ? 0 : NSNotFound;
+    [self showCurrentSearchMatch];
+    [self.tableView reloadData];
+}
+
+- (void)showCurrentSearchMatch {
+    if (searchField.stringValue.length == 0) {
+        searchResultLabel.stringValue = @"";
+        return;
+    }
+    if (searchMatchIndex == NSNotFound) {
+        searchResultLabel.stringValue = @"No matches";
+        return;
+    }
+    NSPoint match = searchMatches[searchMatchIndex].pointValue;
+    NSInteger row = (NSInteger)match.y;
+    NSInteger column = (NSInteger)match.x;
+    searchResultLabel.stringValue = [NSString stringWithFormat:@"%ld of %ld", (long)searchMatchIndex + 1, (long)searchMatches.count];
+    [self.tableView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+    [self.tableView selectColumnIndexes:[NSIndexSet indexSetWithIndex:column] byExtendingSelection:NO];
+    [self.tableView scrollRowToVisible:row];
+    [self.tableView scrollColumnToVisible:column];
+}
+
+- (IBAction)find:(id)sender {
+    [self.tableView.window makeFirstResponder:searchField];
+    [searchField.currentEditor selectAll:sender];
+}
+
+- (IBAction)findNext:(id)sender {
+    if (searchMatches.count == 0) return;
+    searchMatchIndex = (searchMatchIndex + 1) % searchMatches.count;
+    [self showCurrentSearchMatch];
+}
+
+- (IBAction)findPrevious:(id)sender {
+    if (searchMatches.count == 0) return;
+    searchMatchIndex = (searchMatchIndex + searchMatches.count - 1) % searchMatches.count;
+    [self showCurrentSearchMatch];
 }
 
 - (void)close {
@@ -200,6 +350,7 @@
 			if (error) *error = outError;
 			[self updateTableColumns];
 			[self.tableView reloadData];
+			[self updateSearchMatches];
 			return NO;
 		}
 		_maxColumnNumber = MAX(_maxColumnNumber, line.count);
@@ -212,6 +363,7 @@
 	
 	[self updateTableColumns];
 	[self.tableView reloadData];
+	[self updateSearchMatches];
 	return YES;
 }
 
@@ -265,6 +417,13 @@
 -(void)tableView:(NSTableView *)tableView willDisplayCell:(id)cell forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex {
     if(_data.count <= rowIndex) return;
     NSTextFieldCell *textCell = cell;
+    BOOL matchesSearch = NO;
+    if (searchField.stringValue.length > 0) {
+        NSString *value = [[self tableView:tableView objectValueForTableColumn:tableColumn row:rowIndex] description];
+        matchesSearch = value.length > 0 && [value rangeOfString:searchField.stringValue options:NSCaseInsensitiveSearch].location != NSNotFound;
+    }
+    textCell.drawsBackground = matchesSearch;
+    textCell.backgroundColor = matchesSearch ? [NSColor.controlAccentColor colorWithAlphaComponent:0.20] : NSColor.textBackgroundColor;
     NSArray *rowArray = [_data objectAtIndex:rowIndex];
     if(rowArray.count > tableColumn.identifier.integerValue){
         if([rowArray[tableColumn.identifier.integerValue] isKindOfClass:[NSDecimalNumber class]]){
@@ -301,6 +460,7 @@
     _data[rowIndex] = rowArray;
     if (shouldReload) [self.tableView reloadData];
     [self resizeColumnToFitContents:tableColumn];
+    [self updateSearchMatches];
 }
 
 -(void)tableViewColumnDidMove:(NSNotification *)aNotification {
@@ -777,29 +937,33 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
 }
 
 -(void)updateToolbarIcons {
-	if (NSAppKitVersionNumber >= NSAppKitVersionNumber10_10) {
-		self.toolBarButtonsAddColumn.segmentStyle = NSSegmentStyleSeparated;
-		self.toolBarButtonsAddRow.segmentStyle = NSSegmentStyleSeparated;
-	}
+    self.toolBarButtonsAddColumn.segmentStyle = NSSegmentStyleSeparated;
+    self.toolBarButtonsAddRow.segmentStyle = NSSegmentStyleSeparated;
     [self.toolBarButtonsAddColumn setImage:[ToolbarIcons imageOfAddLeftColumnIcon] forSegment:0];
     [self.toolBarButtonsAddColumn setImage:[ToolbarIcons imageOfAddRightColumnIcon] forSegment:1];
+    [self.toolBarButtonsAddColumn setToolTip:@"Add column to the left" forSegment:0];
+    [self.toolBarButtonsAddColumn setToolTip:@"Add column to the right" forSegment:1];
     NSSize addColumnSize = self.toolBarButtonsAddColumn.intrinsicContentSize;
     addColumnSize.height = 30;
     self.toolbarItemAddColumn.minSize = addColumnSize;
     self.toolbarItemAddColumn.maxSize = addColumnSize;
     [self.toolBarButtonsAddRow setImage:[ToolbarIcons imageOfAddRowAboveIcon] forSegment:0];
     [self.toolBarButtonsAddRow setImage:[ToolbarIcons imageOfAddRowBelowIcon] forSegment:1];
+    [self.toolBarButtonsAddRow setToolTip:@"Add row above" forSegment:0];
+    [self.toolBarButtonsAddRow setToolTip:@"Add row below" forSegment:1];
     NSSize addRowSize = self.toolBarButtonsAddRow.intrinsicContentSize;
     addRowSize.height = 30;
     self.toolbarItemAddRow.minSize = addRowSize;
     self.toolbarItemAddRow.maxSize = addRowSize;
     self.toolBarButtonDeleteColumn.image = [ToolbarIcons imageOfDeleteColumnIcon];
+    self.toolBarButtonDeleteColumn.toolTip = @"Delete selected column";
     NSSize deleteColumnSize = self.toolBarButtonDeleteColumn.intrinsicContentSize;
     deleteColumnSize.width = 35;
     deleteColumnSize.height = 30;
     self.toolbarItemDeleteColumn.minSize = deleteColumnSize;
     self.toolbarItemDeleteColumn.maxSize = deleteColumnSize;
     self.toolBarButtonDeleteRow.image = [ToolbarIcons imageOfDeleteRowIcon];
+    self.toolBarButtonDeleteRow.toolTip = @"Delete selected row";
     NSSize deleteRowSize = self.toolBarButtonDeleteRow.intrinsicContentSize;
     deleteRowSize.width = 35;
     deleteRowSize.height = 30;
@@ -850,6 +1014,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
         [self.tableView endUpdates];
         [self resizeTableColumnsToFitContents];
     } completionHandler:^{
+        [self updateSearchMatches];
     }];
 }
 
@@ -946,6 +1111,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
     
     [self updateTableColumnsNames];
     [self.tableView selectColumnIndexes:columnIndexes byExtendingSelection:NO];
+    [self updateSearchMatches];
     [[self.undoManager prepareWithInvocationTarget:self]deleteColumnsAtIndexes:columnIndexes];
     
 }
@@ -979,6 +1145,7 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
     }else if([self.tableView selectedRow] != -1){
         [self.tableView scrollRowToVisible:[[self.tableView selectedRowIndexes] firstIndex]];
     }
+    if (searchField.stringValue.length > 0) [self updateSearchMatches];
 }
 
 #pragma mark - copy,paste,delete
